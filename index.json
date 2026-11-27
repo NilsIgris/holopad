@@ -1,0 +1,48 @@
+{
+  "format": 1,
+  "kdf": {
+    "alg": "pbkdf2-sha256",
+    "iterations": 600000,
+    "salt": "YiK7H4BDAbU8YVs/+iyOaA=="
+  },
+  "check": "SFBEMU8wC282lz4mKGELECnF4a04LcC7a/sSsvEBlJf+BctYcGPkLQKHasP6z4Uj",
+  "generated_at": "2026-11-27T17:59:47+00:00",
+  "docs": [
+    {
+      "file": "06025aae7e77d82240a9775e.enc",
+      "mac": "6c5d6bc9a496ec38ede61761f19f2502205d9e5c62bbcbfbe7aba99fd473e6ee"
+    },
+    {
+      "file": "37d4260da34ea54d32fe47c0.enc",
+      "mac": "a957a6e3fa8a752a7a553c4e87223201517efa59054e4385b16e72350a75779a"
+    },
+    {
+      "file": "778da5f684eb45c6da721ada.enc",
+      "mac": "055e2c8673c3a265d4419baa2a89104c79f8ab3925fe786bc1ab4147c3e2149f"
+    },
+    {
+      "file": "91c3d772819eedca3eac4b90.enc",
+      "mac": "84759d07c88503a069d2e489136579b0d972fbb054c5a78df4babce233886d2f"
+    },
+    {
+      "file": "a7304c5cb72388031395519b.enc",
+      "mac": "db12dd76211befde688579137d59613ed85d33cbf5de26d8bcdcf4165b7285b4"
+    },
+    {
+      "file": "c45b2ee07d5419589c6776b9.enc",
+      "mac": "27220a920fbb7a4ea551540172c01d43034d05dc662eb3dd75bf7adeb2a6b429"
+    },
+    {
+      "file": "c83079638ab3f39faa10430c.enc",
+      "mac": "033d05478a86d007119e69652706dfac3a13c2501363c13d6992c24c694da7c8"
+    },
+    {
+      "file": "f218879261f88f5b1bd83bd6.enc",
+      "mac": "65bbd16d3c0443df42cf97ab7c121858b539a89f002c204aa44dbf1147cb486e"
+    },
+    {
+      "file": "f7ec4c742977c5dbf86fb840.enc",
+      "mac": "01ecb8581f2f31323daae9863458ad02a883e8dae06ee1d6b8ba836a79e709a7"
+    }
+  ]
+}
