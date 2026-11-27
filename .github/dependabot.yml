@@ -1,0 +1,21 @@
+# Mises à jour automatiques des dépendances (une PR par semaine, testée par la CI).
+version: 2
+updates:
+  - package-ecosystem: npm
+    directory: /
+    schedule: { interval: weekly }
+    groups:
+      npm:
+        patterns: ["*"]
+  - package-ecosystem: cargo
+    directory: /
+    schedule: { interval: weekly }
+    groups:
+      cargo:
+        patterns: ["*"]
+  - package-ecosystem: pip
+    directory: /tools/sync_docs
+    schedule: { interval: weekly }
+  - package-ecosystem: github-actions
+    directory: /
+    schedule: { interval: weekly }

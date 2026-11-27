@@ -1,0 +1,14 @@
+node_modules/
+dist/
+target/
+src-tauri/gen/
+src-tauri/resources/docs-seed/*
+!src-tauri/resources/docs-seed/.gitkeep
+__pycache__/
+.pytest_cache/
+data/
+# Ne jamais versionner les sources des documents ni la phrase de passe
+secrets/
+*.secret.json
+.env*
+*.key

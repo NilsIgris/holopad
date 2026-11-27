@@ -1,0 +1,21 @@
+[package]
+name = "rp-core"
+version = "0.1.0"
+edition.workspace = true
+license.workspace = true
+description = "Cœur de Holopad : déchiffrement et cache hors ligne des documents RP"
+
+[dependencies]
+aes-gcm = "0.10"
+base64 = "0.22"
+hex = "0.4"
+hmac = "0.12"
+pbkdf2 = { version = "0.12", default-features = false, features = ["hmac"] }
+serde = { version = "1", features = ["derive"] }
+serde_json = "1"
+sha2 = "0.10"
+thiserror = "2"
+zeroize = "1"
+
+[dev-dependencies]
+tempfile = "3"

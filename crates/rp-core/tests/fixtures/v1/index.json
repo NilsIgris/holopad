@@ -1,0 +1,20 @@
+{
+  "format": 1,
+  "kdf": {
+    "alg": "pbkdf2-sha256",
+    "iterations": 1000,
+    "salt": "92Zq5erWvGdBlxjJjO+UCA=="
+  },
+  "check": "SFBEMS7bLK1XinsuKJQmRRvb1aQaO4n91KLn+L3rLYoQzfKBfXXf+GzWBEfMOx3q",
+  "generated_at": "2026-11-01T00:00:00+00:00",
+  "docs": [
+    {
+      "file": "863992a7892d21629b7f4f09.enc",
+      "mac": "c6cdff1b408bd0d74ec80a5b3add9fe11549a5e45f24540855b6f2d570d510aa"
+    },
+    {
+      "file": "eb9618160e3457fd53f446c4.enc",
+      "mac": "8f5801b78b94b60c523ec18d52546312c820341b2b7cedd43421794e6a57dab9"
+    }
+  ]
+}

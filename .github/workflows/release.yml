@@ -1,0 +1,93 @@
+name: Publier une version
+
+# Lancement manuel (Actions → « Publier une version » → Run workflow).
+# Sans numéro saisi, la version précédente est incrémentée (0.1.3 → 0.1.4).
+# Les applications installées détectent la nouvelle version et se mettent à jour.
+on:
+  workflow_dispatch:
+    inputs:
+      version:
+        description: "Numéro de version (vide = incrément automatique)"
+        required: false
+        default: ""
+
+permissions:
+  contents: write
+
+concurrency:
+  group: release
+  cancel-in-progress: false
+
+jobs:
+  release:
+    runs-on: windows-latest
+    defaults:
+      run:
+        shell: bash
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Vérifier la configuration
+        env:
+          PRIVATE_KEY: ${{ secrets.TAURI_SIGNING_PRIVATE_KEY }}
+          PUBKEY: ${{ vars.TAURI_UPDATER_PUBKEY }}
+        run: |
+          [ -n "$PRIVATE_KEY" ] || { echo "::error::Secret TAURI_SIGNING_PRIVATE_KEY manquant (voir README)"; exit 1; }
+          [ -n "$PUBKEY" ] || { echo "::error::Variable TAURI_UPDATER_PUBKEY manquante (voir README)"; exit 1; }
+
+      - name: Déterminer la version
+        id: version
+        env:
+          GH_TOKEN: ${{ github.token }}
+          INPUT: ${{ inputs.version }}
+        run: |
+          if [ -n "$INPUT" ]; then
+            v="${INPUT#v}"
+          else
+            last=$(gh release view --json tagName -q .tagName 2>/dev/null || echo "v0.0.0")
+            IFS=. read -r major minor patch <<< "${last#v}"
+            v="$major.$minor.$((patch + 1))"
+          fi
+          [[ "$v" =~ ^[0-9]+\.[0-9]+\.[0-9]+$ ]] || { echo "::error::Version invalide : $v"; exit 1; }
+          echo "version=$v" >> "$GITHUB_OUTPUT"
+          echo "Version : $v"
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: npm
+      - uses: dtolnay/rust-toolchain@stable
+      - uses: Swatinem/rust-cache@v2
+      - run: npm ci
+
+      - name: Appliquer la version et la configuration de mise à jour
+        env:
+          HOLOPAD_REPO: ${{ github.repository }}
+          TAURI_UPDATER_PUBKEY: ${{ vars.TAURI_UPDATER_PUBKEY }}
+        run: node tools/set-version.mjs "${{ steps.version.outputs.version }}"
+
+      - name: Embarquer les documents chiffrés (lecture hors ligne dès l'installation)
+        run: |
+          if git ls-remote --exit-code --heads origin docs-data >/dev/null; then
+            git fetch --depth 1 origin docs-data
+            git archive FETCH_HEAD | tar -x -C src-tauri/resources/docs-seed
+            rm -f src-tauri/resources/docs-seed/README.md
+          fi
+          ls src-tauri/resources/docs-seed
+
+      - name: Construire, signer et publier
+        uses: tauri-apps/tauri-action@v0
+        env:
+          GITHUB_TOKEN: ${{ github.token }}
+          HOLOPAD_REPO: ${{ github.repository }}
+          TAURI_SIGNING_PRIVATE_KEY: ${{ secrets.TAURI_SIGNING_PRIVATE_KEY }}
+          TAURI_SIGNING_PRIVATE_KEY_PASSWORD: ${{ secrets.TAURI_SIGNING_PRIVATE_KEY_PASSWORD }}
+        with:
+          tagName: v${{ steps.version.outputs.version }}
+          releaseName: Holopad v${{ steps.version.outputs.version }}
+          releaseBody: |
+            Installer : télécharger `Holopad_${{ steps.version.outputs.version }}_x64-setup.exe`.
+            Les installations existantes se mettent à jour automatiquement.
+          releaseDraft: false
+          prerelease: false
+          includeUpdaterJson: true

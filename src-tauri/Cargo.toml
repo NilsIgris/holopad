@@ -1,0 +1,31 @@
+[package]
+name = "holopad"
+version = "0.1.0"
+description = "Holopad — tableau de bord RP Clone Wars"
+edition.workspace = true
+license.workspace = true
+
+[lib]
+name = "holopad_lib"
+crate-type = ["staticlib", "cdylib", "rlib"]
+
+[build-dependencies]
+tauri-build = { version = "2", features = [] }
+
+[dependencies]
+rp-core = { path = "../crates/rp-core" }
+tauri = { version = "2", features = [] }
+tauri-plugin-clipboard-manager = "2"
+tauri-plugin-process = "2"
+tauri-plugin-single-instance = "2"
+tauri-plugin-updater = "2"
+tauri-plugin-window-state = "2"
+reqwest = { version = "0.12", default-features = false, features = ["rustls-tls"] }
+serde = { version = "1", features = ["derive"] }
+serde_json = "1"
+
+[target.'cfg(windows)'.dependencies]
+keyring = { version = "3", features = ["windows-native"] }
+
+[target.'cfg(not(windows))'.dependencies]
+keyring = { version = "3" }

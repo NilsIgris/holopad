@@ -1,0 +1,70 @@
+name: Synchronisation des documents
+
+# Récupère les Google Docs / Google Sites, les chiffre et publie le résultat
+# sur la branche « docs-data ». L'application ne télécharge que ce qui a changé.
+on:
+  schedule:
+    - cron: "17 4 * * *" # tous les jours vers 5 h / 6 h (heure de Paris)
+  workflow_dispatch:
+
+permissions:
+  contents: write
+
+concurrency:
+  group: docs-sync
+  cancel-in-progress: false
+
+jobs:
+  sync:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Récupérer les données chiffrées actuelles
+        run: |
+          mkdir -p data
+          if git ls-remote --exit-code --heads origin docs-data >/dev/null; then
+            git fetch --depth 1 origin docs-data
+            git archive FETCH_HEAD | tar -x -C data
+          fi
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+          cache: pip
+          cache-dependency-path: tools/sync_docs/requirements.txt
+      - run: pip install -r tools/sync_docs/requirements.txt
+
+      - name: Télécharger, convertir et chiffrer
+        id: sync
+        env:
+          DOCS_SOURCES: ${{ secrets.DOCS_SOURCES }}
+          DOCS_PASSPHRASE: ${{ secrets.DOCS_PASSPHRASE }}
+        run: |
+          set +e
+          python tools/sync_docs/sync_docs.py --out data
+          code=$?
+          echo "code=$code" >> "$GITHUB_OUTPUT"
+          # 2 = échec partiel : on publie quand même ce qui a réussi.
+          if [ "$code" -ne 0 ] && [ "$code" -ne 2 ]; then exit "$code"; fi
+
+      - name: Publier sur la branche docs-data
+        if: steps.sync.outputs.changed == 'true'
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          cp tools/sync_docs/DATA_README.md data/README.md
+          cd data
+          git init -q -b docs-data
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git add -A
+          git commit -q -m "Documents chiffrés — $(date -u +%Y-%m-%dT%H:%MZ)"
+          # Un seul commit, sans historique : la branche reste légère.
+          git push -q --force "https://x-access-token:${GH_TOKEN}@github.com/${GITHUB_REPOSITORY}.git" docs-data
+
+      - name: Signaler les documents non récupérés
+        if: steps.sync.outputs.code == '2'
+        run: |
+          echo "::error::Au moins un document n'a pas pu être récupéré (voir le résumé). La dernière version connue est conservée."
+          exit 1
