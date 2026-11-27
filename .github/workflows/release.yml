@@ -76,7 +76,7 @@ jobs:
           ls src-tauri/resources/docs-seed
 
       - name: Construire, signer et publier
-        uses: tauri-apps/tauri-action@v0
+        uses: tauri-apps/tauri-action@v1
         env:
           GITHUB_TOKEN: ${{ github.token }}
           HOLOPAD_REPO: ${{ github.repository }}
