@@ -52,7 +52,7 @@ jobs:
           echo "version=$v" >> "$GITHUB_OUTPUT"
           echo "Version : $v"
 
-      - uses: actions/setup-node@v4
+      - uses: actions/setup-node@v7
         with:
           node-version: 22
           cache: npm
