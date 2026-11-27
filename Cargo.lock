@@ -1731,7 +1731,7 @@ dependencies = [
 
 [[package]]
 name = "holopad"
-version = "0.0.1"
+version = "0.1.0"
 dependencies = [
  "keyring",
  "reqwest 0.12.28",

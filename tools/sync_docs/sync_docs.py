@@ -180,22 +180,37 @@ class Http(Protocol):
     def get(self, url: str) -> Response: ...
 
 
+RETRY_STATUSES = {429, 500, 502, 503, 504}
+
+
 class RequestsHttp:
-    def __init__(self) -> None:
+    def __init__(self, retries: int = 3, backoff: float = 5.0) -> None:
         import requests
 
         self._session = requests.Session()
         self._session.headers["User-Agent"] = USER_AGENT
+        self._retries = retries
+        self._backoff = backoff
 
     def get(self, url: str) -> Response:
+        import time
+
         import requests
 
-        try:
-            r = self._session.get(url, timeout=30, allow_redirects=True)
-        except requests.RequestException as exc:
-            raise FetchError(f"erreur réseau ({type(exc).__name__})") from None
-        r.encoding = r.encoding if r.encoding and r.encoding.lower() != "iso-8859-1" else "utf-8"
-        return Response(r.status_code, r.headers.get("Content-Type", ""), r.url, r.text)
+        for attempt in range(self._retries):
+            try:
+                r = self._session.get(url, timeout=30, allow_redirects=True)
+            except requests.RequestException as exc:
+                if attempt + 1 < self._retries:
+                    time.sleep(self._backoff * (attempt + 1))
+                    continue
+                raise FetchError(f"erreur réseau ({type(exc).__name__})") from None
+            if r.status_code in RETRY_STATUSES and attempt + 1 < self._retries:
+                time.sleep(self._backoff * (attempt + 1))
+                continue
+            r.encoding = r.encoding if r.encoding and r.encoding.lower() != "iso-8859-1" else "utf-8"
+            return Response(r.status_code, r.headers.get("Content-Type", ""), r.url, r.text)
+        raise FetchError("erreur réseau")  # pragma: no cover
 
 
 def _is_login_page(resp: Response) -> bool:
@@ -213,6 +228,16 @@ def _check(resp: Response, expect_html: bool) -> None:
         raise FetchError("réponse HTML inattendue (document privé ou format refusé)")
 
 
+_IMAGE_DEF = re.compile(r"^\[image\d+\]:\s*<?data:[^\n]*$", re.M | re.I)
+_IMAGE_REF = re.compile(r"!\[[^\]]*\]\[image\d+\]", re.I)
+
+
+def strip_embedded_images(md: str) -> str:
+    """L'export Markdown de Google Docs embarque les images en base64 (souvent > 100 Ko)."""
+    md = _IMAGE_DEF.sub("", md)
+    return _IMAGE_REF.sub("*[image]*", md)
+
+
 def normalize_markdown(text: str) -> str:
     text = text.replace("\r\n", "\n").replace("\r", "\n").replace(" ", " ")
     text = text.lstrip("﻿")
@@ -222,47 +247,195 @@ def normalize_markdown(text: str) -> str:
     return text.strip() + "\n"
 
 
-def html_to_markdown(html: str, *, site: bool) -> str:
+# Texte de la table des matières vide de Google Sites (selon la langue du site).
+SITES_PLACEHOLDERS = ("Ajoutez des titres qui apparaîtront", "Add headings")
+SPACER_TEXT = {"", ".", "·", "-", "_"}
+
+
+def _style(tag) -> str:
+    return (tag.get("style") or "").replace(" ", "").lower()
+
+
+def _apply_class_styles(soup) -> None:
+    """Google Docs (export HTML, mobilebasic) met le gras / italique dans des classes CSS."""
+    rules: dict[str, str] = {}
+    for style in soup.find_all("style"):
+        for name, body in re.findall(r"\.([A-Za-z0-9_-]+)\s*\{([^}]*)\}", style.get_text()):
+            rules[name] = rules.get(name, "") + ";" + body
+    if not rules:
+        return
+    for tag in soup.find_all(class_=True):
+        extra = ";".join(rules[c] for c in tag.get("class", []) if c in rules)
+        if extra:
+            tag["style"] = (tag.get("style") or "") + ";" + extra
+
+
+def _flags(span) -> tuple[bool, bool, bool]:
+    st = _style(span)
+    weight = re.search(r"font-weight:(bold|\d+)", st)
+    bold = bool(weight) and (weight.group(1) == "bold" or int(weight.group(1)) >= 600)
+    return bold, "font-style:italic" in st, "underline" in st
+
+
+def _split_paragraphs_on_br(soup, root) -> None:
+    """Un <p> qui contient des <br> devient un <p> par ligne (une règle par ligne sur ces pages)."""
+    for p in list(root.find_all("p")):
+        if not p.find("br"):
+            continue
+        # Sortir les <br> des <span> pour qu'ils soient enfants directs du <p>.
+        for br in list(p.find_all("br")):
+            while br.parent is not None and br.parent is not p and br.parent.name in ("span", "strong", "em", "b", "i", "u"):
+                parent = br.parent
+                if parent.parent is None:  # span déjà retiré (plusieurs <br> dans le même span vide)
+                    break
+                # <span>avant<br>après</span> → <span>avant</span><br><span>après</span>
+                after = soup.new_tag(parent.name, attrs=dict(parent.attrs))
+                for sib in list(br.next_siblings):
+                    after.append(sib.extract())
+                br.extract()
+                parent.insert_after(br)
+                if after.get_text(strip=True) or after.find(["img", "br"]):
+                    br.insert_after(after)
+                if not parent.get_text(strip=True) and not parent.find(["img", "br"]):
+                    parent.decompose()
+        lines: list[list] = [[]]
+        for child in list(p.contents):
+            if getattr(child, "name", None) == "br":
+                lines.append([])
+            else:
+                lines[-1].append(child.extract())
+        new_ps = []
+        for line in lines:
+            if not any((c.get_text() if hasattr(c, "get_text") else str(c)).strip() for c in line):
+                continue
+            np = soup.new_tag("p")
+            for c in line:
+                np.append(c)
+            new_ps.append(np)
+        for np in new_ps:
+            p.insert_before(np)
+        p.decompose()
+
+
+def _enrich(soup, root) -> None:
+    """Traduit la mise en forme par style en balises que markdownify comprend."""
+    _split_paragraphs_on_br(soup, root)
+    # Points d'espacement en très petite police (6 pt).
+    for span in root.find_all("span"):
+        size = re.search(r"font-size:([\d.]+)pt", _style(span))
+        if span.get_text(strip=True) in SPACER_TEXT - {""} and size and float(size.group(1)) <= 8:
+            span.decompose()
+    for p in root.find_all("p"):
+        if p.get_text(strip=True) in SPACER_TEXT and not p.find("img"):
+            p.decompose()
+
+    # Fusionne les morceaux voisins de même mise en forme (sinon « *a**b* »).
+    for span in root.find_all("span"):
+        if span.parent is None or not span.get_text(strip=True):
+            continue
+        mine = _flags(span)
+        nxt = span.next_sibling
+        while nxt is not None:
+            if isinstance(nxt, str) and not nxt.strip():
+                nxt = nxt.next_sibling
+                continue
+            if getattr(nxt, "name", None) == "span" and nxt.get_text(strip=True) and _flags(nxt) == mine:
+                following = nxt.next_sibling
+                for child in list(nxt.contents):
+                    span.append(child.extract())
+                nxt.decompose()
+                nxt = following
+                continue
+            break
+
+    # Paragraphe court entièrement souligné = intertitre (convention de ces pages).
+    for p in root.find_all("p"):
+        spans = [s for s in p.find_all("span") if s.get_text(strip=True)]
+        text = p.get_text(" ", strip=True)
+        if spans and len(text) <= 120 and all(_flags(s)[2] for s in spans):
+            p.name = "h2"
+
+    for span in root.find_all("span"):
+        if not span.get_text(strip=True) or span.find_parent(["h1", "h2", "h3", "h4", "h5", "h6"]):
+            continue
+        bold, italic, _ = _flags(span)
+        for flag, name in ((bold, "strong"), (italic, "em")):
+            if flag:
+                inner = soup.new_tag(name)
+                for child in list(span.contents):
+                    inner.append(child.extract())
+                span.append(inner)
+
+
+def _sites_root(soup):
+    for tag in soup.find_all(["header", "nav", "footer"]):
+        tag.decompose()
+    sections = []
+    for sec in soup.find_all("section"):
+        if sec.find_parent("section"):
+            continue
+        text = sec.get_text(" ", strip=True)
+        if text and not text.startswith(SITES_PLACEHOLDERS):
+            sections.append(sec)
+    if sections:
+        container = soup.new_tag("div")
+        for sec in sections:
+            container.append(sec.extract())
+        return container
+    return soup.find(attrs={"role": "main"}) or soup.find("main") or soup.body or soup
+
+
+def html_to_markdown(html: str, *, mode: str) -> str:
+    """mode : « site » (Google Sites), « docs » (export HTML / mobilebasic de Google Docs)."""
     from bs4 import BeautifulSoup
     from markdownify import markdownify
 
     soup = BeautifulSoup(html, "html.parser")
-    for tag in soup(["script", "style", "noscript", "svg", "template", "iframe", "link", "meta"]):
+    if mode == "docs":
+        _apply_class_styles(soup)
+    for tag in soup(["script", "style", "noscript", "svg", "template", "iframe", "link", "meta", "input"]):
         tag.decompose()
-    root = None
-    if site:
-        root = soup.find(attrs={"role": "main"}) or soup.find("main")
-        if root is not None:
-            for tag in root.find_all(["nav", "header", "footer"]):
-                tag.decompose()
-    if root is None:
-        root = soup.body or soup
+    if mode == "site":
+        root = _sites_root(soup)
+    else:
+        root = soup.select_one(".doc-content") or soup.body or soup
         for tag in root.find_all(["nav", "header", "footer"]):
             tag.decompose()
+    _enrich(soup, root)
     md = markdownify(str(root), heading_style="ATX", bullets="-", strip=["img"])
+    md = re.sub(r"\*\*\s*\*\*", "", md)  # gras adjacents fusionnés
     return normalize_markdown(md)
 
 
 def fetch_markdown(src: Source, http: Http) -> str:
     if src.kind == "gdoc":
-        base = f"https://docs.google.com/document/d/{src.ref}/export"
+        base = f"https://docs.google.com/document/d/{src.ref}"
+        attempts = (
+            # 1. export Markdown natif ; 2. export HTML ; 3. version mobile (seule
+            #    possibilité quand le téléchargement est désactivé pour les lecteurs).
+            (f"{base}/export?format=md", False, lambda t: normalize_markdown(strip_embedded_images(t))),
+            (f"{base}/export?format=html", True, lambda t: html_to_markdown(t, mode="docs")),
+            (f"{base}/mobilebasic", True, lambda t: html_to_markdown(t, mode="docs")),
+        )
+        first_error: FetchError | None = None
         md = ""
-        try:
-            resp = http.get(f"{base}?format=md")
-            _check(resp, expect_html=False)
-            md = normalize_markdown(resp.text)
-        except FetchError as first:
-            # Repli : export HTML converti localement.
+        for url, expect_html, convert in attempts:
             try:
-                resp = http.get(f"{base}?format=html")
-                _check(resp, expect_html=True)
-                md = html_to_markdown(resp.text, site=False)
-            except FetchError:
-                raise first from None
+                resp = http.get(url)
+                _check(resp, expect_html=expect_html)
+                md = convert(resp.text)
+                if len(md.strip()) >= MIN_CONTENT_CHARS:
+                    break
+                raise FetchError("contenu vide ou trop court")
+            except FetchError as exc:
+                first_error = first_error or exc
+                md = ""
+        if not md:
+            raise first_error or FetchError("aucun format récupérable")
     else:
         resp = http.get(src.ref)
         _check(resp, expect_html=True)
-        md = html_to_markdown(resp.text, site=True)
+        md = html_to_markdown(resp.text, mode="site")
     if len(md.strip()) < MIN_CONTENT_CHARS:
         raise FetchError("contenu vide ou trop court")
     return md
